@@ -79,6 +79,17 @@
 
             <p class="subtitle is-5 mt-5">Oba argumenty można również uzyskać dodając odpowiedni offset do wskaźnika stosu.</p>
 
+            <img src="images/0x7.png">
+            <p class="subtitle is-5 mt-5">Przykładowy debug log:</p>
+            <img src="images/0x8.png">
+
+            <p class="subtitle is-5 mt-5">Manipulowanie zwracaną wartością</p>
+            <p class="subtitle is-5 mt-5">NtTerminateProcess zwraca wartość NTSTATUS w rejestrze RAX. Odwołanie do swojego kodu przeniosłem 0x151 bajtów od początku funkcji. W tym miejscu znalazła się spora instrukcja, co ułatwiło sprawę.</p>
+
+            <img src="images/0x9.png">
+
+            <p class="subtitle is-5 mt-5">Postanowiłem również pobieżnie sprawdzić zmienia się workflow z zależności od zwracanej wartości i dostrzegłem że w wypadku w którym po instrukcji test ebx, ebx zostaje ustawiona flaga SF to wywoływana jest funkcja NtTerminateThread z argumentem handle równym -2</p>
+
         </div>
     </section>
 </body>
