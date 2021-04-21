@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bulma@0.9.2/css/bulma.min.css">
+    <title>Patching Windows Kernel for Fun and Profit</title>
+    <!-- <script src="tags.js"></script> -->
+    <!-- <script defer src="script.js"></script> -->
+</head>
+<body>
+    <dupa></dupa>
+    <section class="section">
+        <div class="container">
+            <h1 class="title is-1 is-centered">Patching Windows Kernel for Fun and Profit</h1>
+            <p class="mt-1" style="color: green;">// Autor: Paweł Gross</p>
+            <p class="mb-5" style="color: green;">// Kontakt: gross.pawel@protonmail.com</p>
+
+            <p class="subtitle is-5">Do zajęcia się tym tematem zainspirowała mnie chęć kontroli przepływu funkcji API. Nie chodziło mi tylko o stworzenie prymitywnego zaczepu funkcji aby móc skoczyć do swojego kodu. Poza tym aktualnie możliwość modyfikowania struktur kernela jest ograniczona przez Kernel Patch Protection (PatchGuard).
+                Przy tworzeniu tego projektu pojawiło się kilka problemów które wręcz spowodowały ubytek czasu pracy, zwykle opierały się na niedopatrzeniach względem operacji na stosie, lub nieprzestrzeganiu ABI Windowsa.
+            </p>
+
+            <h1 class="title is-1 is-centered mt-3">Pozyskiwanie adresu funkcji Nt</h1>
+            <p class="subtitle is-5">Sposób pozyskiwania adresów funkcji Nt* nie zmienił się. Problem pojawia się przy architekturze x64 w której adres KeServiceDescriptorTable nie jest eksportowany przez co należy stworzyć jego strukturę, oraz przeszukać pamięć.
+                Adres bazowy SSDT znajduje się na pierwszym miejscu w strukturze Service Descriptor Table…
+            </p>
+
+            <h1 class="title is-1 is-centered mt-3">Nadpisywanie funkcji</h1>
+            <p class="subtitle is-5">
+                Mając już adres NtTerminateProcess można przystąpić do nadpisywania pierwszych instrukcji. Testowałem tutaj kilka możliwych opcji z czego przeniesienie adresu do którego będę się odwoływał do rejestru RAX, a następnie wykonanie instrukcji call RAX wydawało się być najsensowniejsze.
+                <pre class="subtitle is-6 m-0">
+                mov rax, fffff880aaaaaaaah
+                call rax
+                </pre>
+                <p class="subtitle is-5">
+                    Oczywiście przenosząc do rejestru adres o rozmiarze unsigned long long zostanie nadpisana więcej niż jedna instrukcja.
+                    Na szczęście żadna instrukcja nie została nadpisana w połowie, zatem obyło się bez nop’ów.
+                    Następnie należy odpowiednio przygotować shellcode, wartości 0x41 między komentarzami to miejsce w którym należy umieścić uwcześnie pobrany adres funkcji do której odwoła się NtTerminateProcess.
+                    <p class="subtitle is-5">BYTE(num, b) w pętli wykonuje przesunięcie bitowe na argumencie w celu dodania adresu do shellcode’u bajt po bajcie.</p>
+                    <p class="subtitle is-5">Pozostało tylko wyłączyć ochronę pamięci przez zapisanie zerem 16-tego bitu w rejestrze cr0, co umożliwi zapisywanie do stron oznaczonych jako tylko do odczytu i skopiować shellcode do funkcji.
+
+                    Dzięki tej solucji mamy już adres powrotu na stosie, który warto z niego zdjąć i przechować w rejestrze r15, ponieważ będzie on kolidować z wartościami które umieszczą oryginalne instrukcje funkcji na stosie.</p>
+                </p>
+            </p>
+
+            <h1 class="title is-1 is-centered mt-3">Pozyskiwanie argumentów</h1>
+            <p class="subtitle is-5">
+            Calling convention funkcji Nt* opiera się na ABI Windowsa, argumenty liczb całkowitych mogą być przechowywane w rejestrach:RBX, RBP, RDI, RSI, RSP, R12, R13, R14, R15.
+            </p>
+            <p class="subtitle is-5">Poszukiwania rozpocząłem od stworzenia programu w C który wywołuje funkcję TerminateProcess, jak się później okazało wartości rejestrów, oraz stosu są różne od tego co zaobserwowałem zamykając inne programy, ponieważ nie często zdarza się aby jakiś program miał exit code nie równy zeru. Zatem postanowiłem dokładnie prześledzić co się zwykle dzieje po zamknięciu programu z GUI (posłużyłem się Process Hackerem). 
+            Funkcja NtTerminateProcess przyjmuje 2 argumenty, Handle i exit code.
+            </p>
+            <p class="subtitle is-5">Jak się okazuje argument zawierający exit code znajduje się w rejestrze RDX.</p>
+            <img src="images/0x0.png">
+            <p class="subtitle is-5">Wykonałem kod z RDX o wartości 0xABCD, co pokryło się z debug logiem rootkitu który wypisywał wartosć rejestru RDX i 0xaaaa na początku funkcji NtTerminateProcess.</p>
+            <img src="images/0x1.png">
+
+            <p class="subtitle is-5">Zatem przejdźmy do argumentu typu Handle. Handle to alias na void pointer.</p>
+            <img src="images/0x2.png">
+
+            <p class="subtitle is-5">Jako ciekawostkę podam że po wywołaniu RtlReportSilentProcessExit w NtTerminateProcess okno programu zniknęło, lecz nadal pozostaje na liście działających procesów.</p>
+            <img src="images/0x3.png">
+
+            <p class="subtitle is-5 mt-5">Funkcja NtTerminateProcess wywołuje się dwukrotnie. Za drugim razem RCX  jest równy 0xFFFFFFFFFFFFFFFF (-1). Co wskazuje na aktualnie wykonywany proces.</p>
+            <img src="images/0x4.png">
+            <img src="images/0x5.png">
+
+            <p class="subtitle is-5 mt-5">Podsumowując pierwszy argument (Handle hProcess) znajduje się w rejestrze RCX, drugi argument (UINT uExitCode) jest przechowywany w RDX.</p>
+            <img src="images/0x6.png">
+
+            <p class="subtitle is-5 mt-5">Oba argumenty można również uzyskać dodając odpowiedni offset do wskaźnika stosu.</p>
+
+        </div>
+    </section>
+</body>
+</html>
